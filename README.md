@@ -1,105 +1,138 @@
-# AlgoScan
-AlgoScan is a web-based tool for automatic identification of cryptographic algorithms from raw hex data. Powered by machine learning (CatBoost), it analyzes ciphertext or hash data and predicts the underlying algorithm, offering easy training, evaluation, and analysis via a Flask web interface.
+# AlgoScan: Cryptographic Algorithm Identification from Hex Data
 
-Features
-Automatic hex data analysis: Predicts the cryptographic algorithm used.
+AlgoScan is a powerful, web-based tool for automatically identifying cryptographic algorithms from raw hexadecimal data. Leveraging a machine learning model built with **CatBoost**, it analyzes ciphertext or hash data to predict the underlying algorithm. This tool offers an intuitive web interface for easy training, evaluation, and analysis.
 
-Model training and evaluation: Train with your own dataset, get model accuracy and performance stats.
+-----
 
-Easy-to-use web interface: Upload hex data, run analysis, and view results from your browser.
+## Features
 
-Supports RSA, SHA256, and other learned algorithms.
+  * **Automatic Hex Data Analysis**: Predicts the cryptographic algorithm used in a given hex string.
+  * **Model Training and Evaluation**: Train the CatBoost model with your own datasets and get detailed performance metrics and accuracy.
+  * **User-Friendly Web Interface**: A simple Flask-based web interface allows you to upload hex data, run analyses, and view results directly in your browser.
+  * **Algorithm Support**: The model supports various cryptographic algorithms, including **RSA** and **SHA256**, and can be trained to recognize others.
+  * **Robust Feature Extraction**: The tool uses a sophisticated feature extraction pipeline that includes statistical, block, and temporal pattern analysis to ensure high accuracy.
 
-Robust feature extraction pipeline: Includes statistical, block, and temporal pattern analysis.
+-----
 
-Requirements
-Python 3.9 or later
+## Requirements
 
-The following Python packages:
+  * **Python 3.9** or later
+  * The following Python packages, which can be installed from `requirements.txt`:
+      * `Flask==2.3.3`
+      * `numpy==1.24.3`
+      * `pandas==2.0.3`
+      * `scipy==1.11.1`
+      * `scikit-learn==1.3.0`
+      * `catboost==1.2`
+      * `joblib==1.3.1`
+  * A training dataset in **CSV format** with two columns: `Ciphertext` (hex strings) and `Algorithm` (algorithm labels). A default dataset, `cryptography_dataset_generated.csv`, is expected.
 
-Flask==2.3.3
+-----
 
-numpy==1.24.3
+## Setup and Installation
 
-pandas==2.0.3
+1.  Clone the repository:
 
-scipy==1.11.1
+    ```bash
+    git clone [repository-url]
+    cd algoscan
+    ```
 
-scikit-learn==1.3.0
+2.  Install the required dependencies:
 
-catboost==1.2
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-joblib==1.3.1
+3.  (Optional) Prepare your dataset:
 
-A training dataset in CSV format (default: cryptography_dataset_generated.csv).
+      * Create a CSV file with the columns `Ciphertext` and `Algorithm`.
+      * Save it as `cryptography_dataset_generated.csv` in the root directory, or specify a different path during model training.
 
-Setup
-Clone the repository.
+-----
 
-Install dependencies:
+## Usage
 
-bash
-pip install -r requirements.txt
-(Optional) Prepare your dataset:
+### Running the Application
 
-The dataset CSV should include two columns: Ciphertext (hex strings) and Algorithm (algorithm label).
+To start the web application, run the `run.py` script from your terminal:
 
-Save it as cryptography_dataset_generated.csv or specify your path during training.
-
-Running the Application
-Start the web interface using the included runner script:
-
-bash
+```bash
 python run.py
-This launches the Flask app locally on port 5000 (http://localhost:5000).[4]
+```
 
-First-Time Model Training
-If no trained model is found, the app will prompt you to train one:
+This will launch the Flask application locally on port `5000`. You can access it in your browser at `http://localhost:5000`.
 
-Go to /train via the web interface or POST to the /train endpoint with your dataset path (JSON):
+### First-Time Model Training 🧠
 
-json
+If no trained model exists, the application will prompt you to train one. You can initiate training through the web interface or via an API call.
+
+**Web Interface**: Navigate to `/train`.
+
+**API Endpoint**: Send a `POST` request to the `/train` endpoint with a JSON body specifying your dataset path:
+
+```json
 {
-  "dataset_path": "cryptography_dataset_generated.csv"
+    "dataset_path": "cryptography_dataset_generated.csv"
 }
-Training will extract features, train the CatBoost model, and save all artifacts.
+```
 
-Analyzing Data
-Use the main interface to paste hex data and submit for analysis.
+The training process involves feature extraction, model training, and saving all artifacts as `.pkl` files in the working directory. This may take a few minutes for large datasets.
 
-Alternatively, POST to /analyze:
+### Analyzing Data
 
-json
+You can analyze hex data by pasting it into the main web interface or by using the `/analyze` API endpoint.
+
+**Web Interface**: Paste your hex data into the input field and click "Submit."
+
+**API Endpoint**: Send a `POST` request to `/analyze` with a JSON body:
+
+```json
 {
-  "hex_input": "YOUR_HEX_DATA_HERE"
+    "hex_input": "YOUR_HEX_DATA_HERE"
 }
-The response includes probable algorithms, confidence scores, and classification level.
+```
 
-Evaluating the Model
-To check performance on a test set, POST to /evaluate:
+The response will include the most probable algorithm, its confidence score, and the classification level. For best results, use longer hex strings (ciphertext or hash outputs).
 
-json
+### Evaluating the Model
+
+To evaluate the model's performance on a test set, use the `/evaluate` endpoint.
+
+**API Endpoint**: Send a `POST` request to `/evaluate` with a JSON body:
+
+```json
 {
-  "dataset_path": "cryptography_dataset_generated.csv"
+    "dataset_path": "cryptography_dataset_generated.csv"
 }
-The response shows accuracy and detailed classification metrics.
+```
 
-Checking Status
-GET /status for details about model readiness and available algorithms.
+The response will provide the model's overall accuracy and detailed classification metrics.
 
-File Structure
-File	Purpose
-algorithm.py	Main feature extraction, training, and model logic 
-app.py	Flask web application endpoints 
-run.py	Application runner (entry point) 
-requirements.txt	Python dependencies 
-README.md	This documentation
-Usage Notes
-For best results, use longer hex strings (ciphertext or hash outputs).
+### Checking Application Status
 
-Training may take several minutes for large datasets.
+To check if a model is ready and see the list of algorithms it supports, send a `GET` request to the `/status` endpoint:
 
-All models are persisted as .pkl files in the working directory.
+```bash
+GET /status
+```
 
-License
-This project is released under the MIT License.
+-----
+
+## File Structure
+
+| File                     | Purpose                                          |
+| :----------------------- | :----------------------------------------------- |
+| `algorithm.py`           | Handles all feature extraction, training, and model logic. |
+| `app.py`                 | Contains the Flask web application endpoints.    |
+| `run.py`                 | The main application runner and entry point.     |
+| `requirements.txt`       | Lists all Python dependencies.                   |
+| `README.md`              | This documentation file.                         |
+| `cryptography_dataset_generated.csv` | Default dataset for training (user-provided). |
+| `*.pkl`                  | Persisted model artifacts (generated after training). |
+
+-----
+
+## License
+
+This project is released under the **MIT License**. For more details, see the `LICENSE` file.
