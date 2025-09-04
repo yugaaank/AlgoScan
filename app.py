@@ -1,10 +1,13 @@
-from flask import Flask, render_template, request, jsonify, flash, redirect, url_for
+from flask import Flask, render_template, request, jsonify, Response
 import os
-import json
+import subprocess
+import sys
 from algorithm import CryptoIdentifier
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-change-this-in-production'
+app.secret_key = os.urandom(24)
+
+MODEL_FILE = 'crypto_model.pkl'
 
 # Initialize the crypto identifier
 crypto_identifier = CryptoIdentifier()
@@ -16,21 +19,30 @@ def index():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    """Analyze the provided hex data"""
+    """Analyze the provided hex data, or indicate that training is needed."""
     try:
+        # Check the file on disk as the source of truth
+        if not os.path.exists(MODEL_FILE):
+            return jsonify({'action': 'start_training'})
+
+        # If we get here, the model file exists.
+        # Let's ensure the global identifier has it loaded.
+        if crypto_identifier.model is None:
+            print("Model file exists, but not loaded in memory. Loading now.")
+            crypto_identifier.load_model()
+            if crypto_identifier.model is None:
+                # This is an unexpected state, indicating a problem with the model file itself.
+                return jsonify({'error': 'Model file found but could not be loaded. Check server logs for details.'}), 500
+
+        # Proceed with analysis
         data = request.get_json()
         hex_input = data.get('hex_input', '').strip()
-        
+
         if not hex_input:
             return jsonify({'error': 'Please provide hex data to analyze'}), 400
-        
-        # Validate that we have a trained model
-        if crypto_identifier.model is None:
-            return jsonify({'error': 'No trained model available. Please train a model first.'}), 400
-        
-        # Perform the analysis
+
         results = crypto_identifier.identify_algorithm(hex_input)
-        
+
         # Format results for JSON response
         formatted_results = []
         for algo, confidence in results:
@@ -40,80 +52,64 @@ def analyze():
                 'confidence': round(confidence * 100, 2),
                 'level': level
             })
-        
+
         return jsonify({
             'success': True,
             'results': formatted_results,
             'input_length': len(hex_input)
         })
-        
+
     except Exception as e:
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
-@app.route('/train', methods=['POST'])
-def train_model():
-    """Train a new model with the provided dataset"""
-    try:
-        data = request.get_json()
-        dataset_path = data.get('dataset_path', 'cryptography_dataset_generated.csv')
+@app.route('/start_training')
+def start_training():
+    """Starts the training process and streams the output."""
+    def training_stream():
+        # Use subprocess to call a training script and capture its output in real-time
+        process = subprocess.Popen(
+            [sys.executable, '-u', 'run_training.py'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        for line in iter(process.stdout.readline, ''):
+            yield f"data: {line.strip()}\n\n"
         
-        if not os.path.exists(dataset_path):
-            return jsonify({'error': f'Dataset file not found: {dataset_path}'}), 400
+        process.wait()
         
-        # Train the model (this might take a while)
-        crypto_identifier.train_model(dataset_path)
+        # After training, reload the model for the current process to use immediately
+        crypto_identifier.load_model()
         
-        return jsonify({
-            'success': True,
-            'message': 'Model trained successfully'
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Training failed: {str(e)}'}), 500
+        # Send a special message to the client to signal completion
+        yield "data: __TRAINING_COMPLETE__\n\n"
 
-@app.route('/evaluate', methods=['POST'])
-def evaluate_model():
-    """Evaluate the current model with a test dataset"""
-    try:
-        data = request.get_json()
-        dataset_path = data.get('dataset_path', 'cryptography_dataset_generated.csv')
-        
-        if not os.path.exists(dataset_path):
-            return jsonify({'error': f'Dataset file not found: {dataset_path}'}), 400
-        
-        if crypto_identifier.model is None:
-            return jsonify({'error': 'No trained model available for evaluation'}), 400
-        
-        # Capture the evaluation output
-        import io
-        import sys
-        from contextlib import redirect_stdout
-        
-        f = io.StringIO()
-        with redirect_stdout(f):
-            crypto_identifier.test_model(dataset_path)
-        
-        evaluation_output = f.getvalue()
-        
-        return jsonify({
-            'success': True,
-            'evaluation_output': evaluation_output
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Evaluation failed: {str(e)}'}), 500
+    return Response(training_stream(), mimetype='text/event-stream')
 
 @app.route('/status')
 def status():
     """Get the current status of the model"""
-    model_trained = crypto_identifier.model is not None
+    model_trained = os.path.exists(MODEL_FILE)
     dataset_exists = os.path.exists('cryptography_dataset_generated.csv')
-    
+
+    # Try to load the label encoder to get the list of algorithms if model is trained
+    available_algorithms = []
+    if model_trained:
+        if crypto_identifier.label_encoder is None:
+            crypto_identifier.load_model()
+        if crypto_identifier.label_encoder is not None:
+            available_algorithms = list(crypto_identifier.label_encoder.classes_)
+
     return jsonify({
         'model_trained': model_trained,
         'dataset_exists': dataset_exists,
-        'available_algorithms': list(crypto_identifier.label_encoder.classes_) if crypto_identifier.label_encoder else []
+        'available_algorithms': available_algorithms
     })
 
+
+
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)

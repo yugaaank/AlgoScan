@@ -562,6 +562,11 @@
           <h2>Analysis Results</h2>
           <div id="results-container"></div>
         </div>
+
+        <div class="results-section" id="training-log-section" style="display: none;">
+            <h2>Model Training in Progress...</h2>
+            <pre id="training-log" style="background: #021a19; padding: 20px; border-radius: 10px; color: #f1fffe; white-space: pre-wrap; word-wrap: break-word; max-height: 400px; overflow-y: auto;"></pre>
+        </div>
       </div>
     </div>
 
@@ -585,12 +590,8 @@
 
       async function checkStatus() {
         try {
-          // Simulate API response for demo
-          const data = {
-            model_trained: true,
-            available_algorithms: ["AES", "RSA", "SHA256", "DES", "MD5"],
-            dataset_exists: true,
-          };
+          const response = await fetch("/status");
+          const data = await response.json();
 
           // Update model status
           const modelStatus = document.getElementById("model-status");
@@ -598,7 +599,7 @@
 
           if (data.model_trained) {
             modelStatus.className = "status-indicator active";
-            modelStatusText.textContent = `Model trained (8 algorithms)`;
+            modelStatusText.textContent = `Model trained (${data.available_algorithms.length} algorithms)`;
           } else {
             modelStatus.className = "status-indicator inactive";
             modelStatusText.textContent = "No trained model available";
@@ -628,7 +629,10 @@
         .getElementById("analysis-form")
         .addEventListener("submit", async function (e) {
           e.preventDefault();
+          handleAnalysis();
+        });
 
+      async function handleAnalysis() {
           const hexInput = document.getElementById("hex-input").value.trim();
           if (!hexInput) {
             showAlert("Please enter hexadecimal data to analyze", "error");
@@ -647,32 +651,71 @@
           const analyzeBtn = document.getElementById("analyze-btn");
           const loading = document.getElementById("loading");
           const resultsSection = document.getElementById("results-section");
+          const trainingLogSection = document.getElementById("training-log-section");
+          const trainingLog = document.getElementById("training-log");
 
           // Show loading
           analyzeBtn.disabled = true;
           loading.classList.add("show");
           resultsSection.classList.remove("show");
+          trainingLogSection.style.display = 'none';
+          trainingLog.textContent = '';
 
           try {
-            // Simulate API call with mock results
-            await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate processing time
+            const response = await fetch("/analyze", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ hex_input: hexInput }),
+            });
 
-            const mockResults = [
-              { algorithm: "AES-256", confidence: 89, level: "High" },
-              { algorithm: "SHA-256", confidence: 67, level: "Medium" },
-              { algorithm: "RSA-2048", confidence: 34, level: "Low" },
-            ];
+            const data = await response.json();
 
-            displayResults(mockResults, hexInput.length);
-            showAlert("Analysis completed successfully!", "success");
+            if (data.action === 'start_training') {
+                // Handle streaming response for training
+                loading.classList.remove("show");
+                trainingLogSection.style.display = 'block';
+                const eventSource = new EventSource("/start_training");
+                eventSource.onmessage = function(event) {
+                    if (event.data === "__TRAINING_COMPLETE__") {
+                        eventSource.close();
+                        showAlert("Model training complete! You can now analyze your data.", "success");
+                        checkStatus();
+                        const analyzeBtn = document.getElementById("analyze-btn");
+                        analyzeBtn.disabled = false;
+                        const loading = document.getElementById("loading");
+                        loading.classList.remove("show");
+                        const trainingLogSection = document.getElementById("training-log-section");
+                        trainingLogSection.style.display = 'none';
+
+                    } else {
+                        trainingLog.textContent += event.data + '\n';
+                        trainingLog.scrollTop = trainingLog.scrollHeight;
+                    }
+                };
+                eventSource.onerror = function() {
+                    showAlert("An error occurred during model training.", "error");
+                    eventSource.close();
+                    analyzeBtn.disabled = false;
+                };
+            } else if (data.error) {
+                showAlert(data.error, "error");
+                loading.classList.remove("show");
+                analyzeBtn.disabled = false;
+            } else {
+                displayResults(data.results, data.input_length);
+                showAlert("Analysis completed successfully!", "success");
+                loading.classList.remove("show");
+                analyzeBtn.disabled = false;
+            }
           } catch (error) {
             console.error("Error during analysis:", error);
             showAlert("Network error during analysis", "error");
-          } finally {
-            analyzeBtn.disabled = false;
             loading.classList.remove("show");
+            analyzeBtn.disabled = false;
           }
-        });
+      }
 
       function displayResults(results, inputLength) {
         const resultsContainer = document.getElementById("results-container");

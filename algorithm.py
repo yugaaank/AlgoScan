@@ -9,7 +9,10 @@
 # ====== 1. IMPORTS ======
 import os
 import math
+import sys
 from collections import Counter
+from contextlib import redirect_stdout
+from io import StringIO
 
 import numpy as np
 import pandas as pd
@@ -179,6 +182,39 @@ def analyze_temporal_patterns(byte_arr: np.ndarray) -> dict:
         'time_domain_kurt': float(scipy_kurtosis(ad)),
     }
 
+def _hamming(a, b):
+    return np.unpackbits(np.bitwise_xor(a, b)).sum()
+
+def _interblock_hamming_stats(arr, block=16):
+    if arr.size < 2*block:
+        return 0.0, 0.0
+    blocks = arr[:(arr.size//block)*block].reshape(-1, block)
+    dists = np.array([_hamming(blocks[i], blocks[i+1]) for i in range(len(blocks)-1)], dtype=np.float64)
+    return float(dists.mean()), float(dists.var())
+
+def _ecb_repetition_score(arr, block=16):
+    if arr.size < 2*block:
+        return 0.0
+    blocks = arr[:(arr.size//block)*block].reshape(-1, block)
+    views = [bytes(b) for b in blocks]
+    unique = len(set(views))
+    return 1.0 - (unique / len(views))  # 0=no repeats, 1=all same
+
+def _bit_autocorr(arr, max_lag=8):
+    if arr.size < 64:
+        return [0.0]*max_lag
+    bits = np.unpackbits(arr).astype(np.float64)
+    bits = bits - bits.mean()
+    var = bits.var()
+    if var == 0:
+        return [0.0]*max_lag
+    ac = []
+    for lag in range(1, max_lag+1):
+        x = bits[:-lag]
+        y = bits[lag:]
+        ac.append(float((x*y).mean() / var))
+    return ac
+
 # ---- Main Feature Extraction ----
 def extract_features(hex_data_string: str) -> dict:
     """Extract a set of numeric, stable features from a hex string."""
@@ -206,44 +242,11 @@ def extract_features(hex_data_string: str) -> dict:
     features['len_bucket_64'] = float(min(arr.size // 64, 8))
 
     # --- Additional structure-aware features ---
-    def _hamming(a, b):
-        return np.unpackbits(np.bitwise_xor(a, b)).sum()
-
-    def _interblock_hamming_stats(arr, block=16):
-        if arr.size < 2*block:
-            return 0.0, 0.0
-        blocks = arr[:(arr.size//block)*block].reshape(-1, block)
-        dists = np.array([_hamming(blocks[i], blocks[i+1]) for i in range(len(blocks)-1)], dtype=np.float64)
-        return float(dists.mean()), float(dists.var())
-
     mean_hd, var_hd = _interblock_hamming_stats(arr)
     features['interblock_hamming_mean'] = mean_hd
     features['interblock_hamming_var']  = var_hd
 
-    def _ecb_repetition_score(arr, block=16):
-        if arr.size < 2*block:
-            return 0.0
-        blocks = arr[:(arr.size//block)*block].reshape(-1, block)
-        views = [bytes(b) for b in blocks]
-        unique = len(set(views))
-        return 1.0 - (unique / len(views))  # 0=no repeats, 1=all same
-
     features['ecb_repetition_score'] = _ecb_repetition_score(arr)
-
-    def _bit_autocorr(arr, max_lag=8):
-        if arr.size < 64:
-            return [0.0]*max_lag
-        bits = np.unpackbits(arr).astype(np.float64)
-        bits = bits - bits.mean()
-        var = bits.var()
-        if var == 0:
-            return [0.0]*max_lag
-        ac = []
-        for lag in range(1, max_lag+1):
-            x = bits[:-lag]
-            y = bits[lag:]
-            ac.append(float((x*y).mean() / var))
-        return ac
 
     ac = _bit_autocorr(arr, max_lag=8)
     for i, v in enumerate(ac, 1):
@@ -300,13 +303,15 @@ class CryptoIdentifier:
 
     # ---- Load persisted artifacts ----
     def load_model(self):
+        print("Attempting to load pre-trained model...")
         try:
             self.model = joblib.load('crypto_model.pkl')
             self.scaler = joblib.load('crypto_scaler.pkl')
             self.feature_names = joblib.load('crypto_features.pkl')
             self.label_encoder = joblib.load('crypto_label_encoder.pkl')
             print('Pre-trained model loaded successfully.')
-        except Exception:
+        except Exception as e:
+            print(f'Error loading model: {e}')
             print('No pre-trained model found. A new one will be trained.')
             self.model = None
             self.scaler = None
@@ -435,7 +440,13 @@ class CryptoIdentifier:
         )
 
         eval_pool = Pool(X_test, y_test)
-        self.model.fit(X_train, y_train, eval_set=eval_pool, early_stopping_rounds=50, verbose=100)
+        
+        # Redirect CatBoost's stdout to capture progress
+        f = StringIO()
+        with redirect_stdout(f):
+            self.model.fit(X_train, y_train, eval_set=eval_pool, early_stopping_rounds=50, verbose=100)
+        training_output = f.getvalue()
+        print(training_output)
 
         print('Model training complete.')
 
@@ -526,7 +537,7 @@ if __name__ == '__main__':
                 bytes.fromhex(cleaned)
             except ValueError:
                 print('Invalid hexadecimal data. Please enter valid hex characters.')
-                raise SystemExit(1)
+                sys.exit(1)
 
             results = identifier.identify_algorithm(cleaned)
             if results:
